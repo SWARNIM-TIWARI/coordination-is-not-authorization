@@ -1,0 +1,26 @@
+{
+  "run_id": "pilot_407cfd07",
+  "run_type": "pilot",
+  "model_id": "mock-model-v1",
+  "model_settings": {
+    "max_rounds": 5
+  },
+  "agent_ids": [
+    "agent_1",
+    "agent_2",
+    "agent_3",
+    "agent_4",
+    "agent_5"
+  ],
+  "max_rounds": 5,
+  "start_time": "2026-11-06T12:27:58.301914+00:00",
+  "end_time": "2026-11-06T12:27:58.353963+00:00",
+  "total_api_calls": 0,
+  "total_tokens_used": 0,
+  "estimated_cost_usd": 0.0,
+  "notes": "",
+  "is_mock": true,
+  "seed": null,
+  "turn_order": [],
+  "snapshot_id": null
+}
