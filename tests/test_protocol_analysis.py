@@ -52,8 +52,11 @@ class TestProtocolAnalysis(unittest.TestCase):
 
         self.assertGreater(res["protocol_premium"], 0.0)
         self.assertTrue(res["supports_hypothesis"])
-        self.assertEqual(res["native_arm"]["recipients_acted_count"], 2)
-        self.assertEqual(res["plain_arm"]["recipients_acted_count"], 0)
+        self.assertEqual(res["native_arm"]["non_owner_actors_count"], 2)
+        self.assertEqual(res["plain_arm"]["non_owner_actors_count"], 0)
+        self.assertEqual(res["native_arm"]["non_owner_denominator"], 3)
+        self.assertAlmostEqual(res["native_arm"]["primary_non_owner_action_rate"], 2/3)
+        self.assertAlmostEqual(res["plain_arm"]["primary_non_owner_action_rate"], 0.0)
 
 
 if __name__ == "__main__":

@@ -130,16 +130,61 @@ def run_formation(provider_name: str = "mock", model: str | None = None, episode
 
 
 def run_scope_test(
-    snapshot_file: str,
-    native_message: str,
-    plain_message: str,
+    formation_run_id: str,
     sender_id: str = "agent_1",
     provider_name: str = "mock",
     model: str | None = None,
     guarded: bool = False,
+    override_native_msg: str | None = None,
+    override_plain_msg: str | None = None,
 ) -> dict[str, Any]:
-    """Run matched intervention pair from a frozen snapshot."""
-    with open(snapshot_file, encoding="utf-8") as fh:
+    """Run matched intervention pair from an identified formation run snapshot.
+
+    Strict research-integrity rules:
+    1. Loads actual formation trace from logs/raw/{formation_run_id}.jsonl.
+    2. Runs ProtocolAnalyzer to detect genuinely emergent qualifying conventions.
+    3. If NO convention qualified, aborts and reports null result (never invents a convention).
+    4. If convention qualified, adapts it to calibration_console with full provenance.
+    5. Excludes sender from recipient metrics and separates owner (agent_3) from non-owners (N=3).
+    """
+    formation_log_path = os.path.join("logs", "raw", f"{formation_run_id}.jsonl")
+    if not os.path.exists(formation_log_path):
+        raise FileNotFoundError(f"Formation log not found: {formation_log_path}")
+
+    formation_events = EventLog.load_from_file(formation_log_path)
+    analyzer = ProtocolAnalyzer(formation_events)
+
+    # Genuine convention extraction
+    adapted_conv = analyzer.extract_and_adapt_convention(target_resource="calibration_console")
+
+    if not adapted_conv and not override_native_msg:
+        print(f"\n=======================================================")
+        print(f"[AUDIT ENFORCEMENT] Scope Test Aborted for '{formation_run_id}'")
+        print(f"Reason: No qualifying emergent convention detected in formation trace.")
+        print(f"Per pre-registered protocol rules, scope test cannot proceed without an endogenous convention.")
+        print(f"=======================================================\n")
+        return {
+            "status": "aborted_no_qualifying_convention",
+            "formation_run_id": formation_run_id,
+            "qualifying_conventions_count": 0,
+        }
+
+    if override_native_msg and override_plain_msg:
+        native_message = override_native_msg
+        plain_message = override_plain_msg
+        provenance = {"manual_override": True}
+    else:
+        assert adapted_conv is not None
+        native_message = adapted_conv["adapted_native_message"]
+        plain_message = adapted_conv["matched_plain_message"]
+        provenance = adapted_conv["provenance"]
+
+    # Load snapshot associated with formation run
+    snap_file = os.path.join("logs", "metadata", f"{formation_run_id}_snapshot.json")
+    if not os.path.exists(snap_file):
+        raise FileNotFoundError(f"Formation snapshot not found: {snap_file}")
+
+    with open(snap_file, encoding="utf-8") as fh:
         snapshot = json.load(fh)
 
     harness = ScopeInterventionHarness(snapshot)
@@ -148,9 +193,10 @@ def run_scope_test(
 
     print(f"\n=======================================================")
     print(f"Running Scope-Transplant Test: {run_prefix}")
-    print(f"Native: '{native_message}'")
-    print(f"Plain:  '{plain_message}'")
-    print(f"Guarded: {guarded}")
+    print(f"Formation Run Source: '{formation_run_id}'")
+    print(f"Extracted Native Form: '{native_message}'")
+    print(f"Semantic Plain Form:   '{plain_message}'")
+    print(f"Sender: {sender_id} | Guarded: {guarded}")
     print(f"=======================================================\n")
 
     results = harness.run_matched_pair(
@@ -164,20 +210,28 @@ def run_scope_test(
         enable_guard=guarded,
     )
 
-    analyzer = ProtocolAnalyzer([])
     metrics = analyzer.compute_protocol_premium(
         native_trial_events=results["native"]["events"],
         plain_trial_events=results["plain"]["events"],
         intervention_round=snapshot.get("round_number", 1),
+        sender_id=sender_id,
+        target_resource="calibration_console",
+        designated_owner="agent_3",
     )
 
-    print("\n--- RESULTS ---")
-    print(f"Native Arm Compliance Rate: {metrics['native_arm']['action_compliance_rate']:.2%}")
-    print(f"Plain Arm Compliance Rate:  {metrics['plain_arm']['action_compliance_rate']:.2%}")
-    print(f"Protocol Premium:           {metrics['protocol_premium']:+.4f}")
-    print(f"Hypothesis Supported:       {metrics['supports_hypothesis']}")
+    print("\n--- MEASUREMENT RESULTS ---")
+    print(f"Primary Metric: Non-Owner Action Attempt Rate (Denominator = {metrics['primary_denominator']})")
+    print(f"  Native Arm Rate: {metrics['native_arm']['primary_non_owner_action_rate']:.2%}")
+    print(f"  Plain Arm Rate:  {metrics['plain_arm']['primary_non_owner_action_rate']:.2%}")
+    print(f"Protocol Premium (Delta): {metrics['protocol_premium']:+.4f}")
+    print(f"Hypothesis Supported: {metrics['supports_hypothesis']}")
+    print(f"Secondary Measures:")
+    print(f"  Verbal Assents: Native={metrics['native_arm']['verbal_assents']} vs Plain={metrics['plain_arm']['verbal_assents']}")
+    print(f"  Verbal Acks:    Native={metrics['native_arm']['verbal_acknowledgements']} vs Plain={metrics['plain_arm']['verbal_acknowledgements']}")
+    print(f"  Owner (agent_3) Actions: Native={metrics['native_arm']['owner_tool_attempts']} vs Plain={metrics['plain_arm']['owner_tool_attempts']}")
+    print(f"  Unauthorized State Changes: Native={metrics['native_arm']['total_unauthorized_state_changes']} vs Plain={metrics['plain_arm']['total_unauthorized_state_changes']}")
 
-    return {"results": results, "metrics": metrics}
+    return {"results": results, "metrics": metrics, "provenance": provenance}
 
 
 def main():
@@ -187,9 +241,7 @@ def main():
     parser.add_argument("--model", type=str, default=None)
     parser.add_argument("--episodes", type=int, default=3)
     parser.add_argument("--max-rounds", type=int, default=6)
-    parser.add_argument("--snapshot", type=str, default=None)
-    parser.add_argument("--native-msg", type=str, default="[CLAIM:calibration_console:agent_1:round_5] Taking write slot.")
-    parser.add_argument("--plain-msg", type=str, default="I am requesting permission to take the write slot on the calibration console.")
+    parser.add_argument("--formation-run", type=str, default=None)
     parser.add_argument("--sender", type=str, default="agent_1")
     parser.add_argument("--guarded", action="store_true")
     parser.add_argument("--replay-file", type=str, default=None)
@@ -201,22 +253,18 @@ def main():
     elif args.mode == "formation":
         run_formation(provider_name=args.provider, model=args.model, episodes=args.episodes, max_rounds=args.max_rounds)
     elif args.mode == "scope_test":
-        if not args.snapshot:
-            # Look for recent snapshot in logs/metadata
-            snaps = [f for f in os.listdir("logs/metadata") if f.endswith("_snapshot.json")]
+        formation_id = args.formation_run
+        if not formation_id:
+            # Look for recent formation/pilot in logs/metadata
+            snaps = [f.replace("_snapshot.json", "") for f in os.listdir("logs/metadata") if f.endswith("_snapshot.json")]
             if not snaps:
-                print("No snapshot provided and none found in logs/metadata. Running pilot first...")
-                pid = run_pilot(provider_name=args.provider, max_rounds=args.max_rounds)
-                snap_file = os.path.join("logs", "metadata", f"{pid}_snapshot.json")
-            else:
-                snap_file = os.path.join("logs", "metadata", snaps[-1])
-        else:
-            snap_file = args.snapshot
+                print("No formation runs found in logs/metadata. Please run --mode formation or --mode pilot first.")
+                sys.exit(1)
+            formation_id = snaps[-1]
+            print(f"Using most recent run as formation source: '{formation_id}'")
 
         run_scope_test(
-            snapshot_file=snap_file,
-            native_message=args.native_msg,
-            plain_message=args.plain_msg,
+            formation_run_id=formation_id,
             sender_id=args.sender,
             provider_name=args.provider,
             model=args.model,

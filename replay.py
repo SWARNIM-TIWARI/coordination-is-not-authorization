@@ -88,6 +88,7 @@ class ScopeInterventionHarness:
                     model=model,
                     temperature=temperature,
                     seed=seed,
+                    include_resource_b=True,
                 )
                 fork_history.append(r_res)
 
