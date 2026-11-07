@@ -1,6 +1,6 @@
 """Adaption Platform API adapter for the Protocol Premium experiment.
 
-Uses the Adaption Responses API or Python SDK. The API key is read strictly
+Uses the Adaption Responses API or official Python SDK. The API key is read strictly
 from the ADAPTION_API_KEY environment variable. Under no circumstances is the
 key printed, logged, stored in output files, or committed to version control.
 """
@@ -14,6 +14,17 @@ from typing import Any
 
 import httpx
 
+try:
+    from dotenv import load_dotenv
+    # Load from current directory and from project root
+    load_dotenv()
+    _proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _env_file = os.path.join(_proj_root, ".env")
+    if os.path.exists(_env_file):
+        load_dotenv(_env_file)
+except ImportError:
+    pass
+
 from providers import LLMProvider
 
 
@@ -25,10 +36,11 @@ class AdaptionProvider(LLMProvider):
     - Automatic exponential backoff on transient errors (429, 500, 502, 503)
     - Strict handling of 401/403 authorization failures
     - Detailed token usage tracking without leaking credentials
+    - Supports both official SDK client and direct HTTP fallback
     """
 
-    DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-    DEFAULT_BASE_URL = "https://api.adaptionlabs.ai/api/v1"
+    DEFAULT_MODEL = os.environ.get("ADAPTION_MODEL", "qwen3.5-397b")
+    DEFAULT_BASE_URL = "https://api.prod.adaptionlabs.ai"
 
     def __init__(
         self,
@@ -42,12 +54,21 @@ class AdaptionProvider(LLMProvider):
         if not api_key or not api_key.strip():
             raise EnvironmentError(
                 "ADAPTION_API_KEY environment variable is not set. "
-                "Please export ADAPTION_API_KEY=<your_key> before initializing AdaptionProvider."
+                "Please configure ADAPTION_API_KEY in your local .env file before initializing AdaptionProvider."
             )
 
         self._api_key = api_key.strip()
-        self._model = model or self.DEFAULT_MODEL
-        self._base_url = (base_url or os.environ.get("ADAPTION_BASE_URL", self.DEFAULT_BASE_URL)).rstrip("/")
+        self._model = model or os.environ.get("ADAPTION_MODEL", self.DEFAULT_MODEL)
+        
+        raw_base = (base_url or os.environ.get("ADAPTION_BASE_URL", self.DEFAULT_BASE_URL)).rstrip("/")
+        if raw_base.endswith("/api/v1"):
+            self._sdk_base_url = raw_base[:-len("/api/v1")]
+            self._http_url = f"{raw_base}/responses"
+        else:
+            self._sdk_base_url = raw_base
+            self._http_url = f"{raw_base}/api/v1/responses"
+        self._base_url = self._sdk_base_url
+
         self._max_calls = max_calls_per_session
         self._max_tokens = max_tokens_per_session
         self._timeout = timeout_seconds
@@ -60,9 +81,9 @@ class AdaptionProvider(LLMProvider):
         # Try initializing official Adaption SDK client if available
         self._sdk_client: Any = None
         try:
-            import adaption  # type: ignore
-            self._sdk_client = adaption.Adaption(api_key=self._api_key)
-        except (ImportError, Exception):
+            import adaption
+            self._sdk_client = adaption.Adaption(api_key=self._api_key, base_url=self._sdk_base_url)
+        except Exception:
             self._sdk_client = None
 
     def generate(
@@ -93,6 +114,28 @@ class AdaptionProvider(LLMProvider):
             return self._generate_via_sdk(messages, target_model, temperature, max_tokens, seed)
         return self._generate_via_http(messages, target_model, temperature, max_tokens, seed)
 
+    def _split_messages(self, messages: list[dict[str, str]]) -> tuple[str | None, Any]:
+        """Separate system instructions from input content/messages."""
+        system_instructions: str | None = None
+        cleaned_input: list[dict[str, str]] = []
+
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role == "system":
+                system_instructions = content
+            else:
+                cleaned_input.append({"role": role, "content": content})
+
+        if len(cleaned_input) == 1 and isinstance(cleaned_input[0].get("content"), str):
+            input_payload: Any = cleaned_input[0]["content"]
+        elif cleaned_input:
+            input_payload = cleaned_input
+        else:
+            input_payload = messages
+
+        return system_instructions, input_payload
+
     def _generate_via_http(
         self,
         messages: list[dict[str, str]],
@@ -101,21 +144,24 @@ class AdaptionProvider(LLMProvider):
         max_tokens: int,
         seed: int | None,
     ) -> dict[str, Any]:
-        """HTTP POST to /responses endpoint with exponential backoff."""
-        url = f"{self._base_url}/responses"
+        """HTTP POST to /api/v1/responses endpoint with exponential backoff."""
+        url = self._http_url
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "User-Agent": "ProtocolPremium/1.0",
         }
 
-        # Convert messages to input prompt format
+        system_instructions, input_payload = self._split_messages(messages)
+
         payload: dict[str, Any] = {
             "model": model,
-            "input": messages,
+            "input": input_payload,
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
+        if system_instructions:
+            payload["instructions"] = system_instructions
         if seed is not None:
             payload["seed"] = seed
 
@@ -131,8 +177,8 @@ class AdaptionProvider(LLMProvider):
                     data = resp.json()
                     content = self._extract_content(data)
                     usage = data.get("usage", {})
-                    p_tokens = usage.get("prompt_tokens", len(str(messages).split()))
-                    c_tokens = usage.get("completion_tokens", len(content.split()))
+                    p_tokens = usage.get("input_tokens", usage.get("prompt_tokens", len(str(messages).split())))
+                    c_tokens = usage.get("output_tokens", usage.get("completion_tokens", len(content.split())))
                     t_tokens = usage.get("total_tokens", p_tokens + c_tokens)
 
                     self._call_count += 1
@@ -182,20 +228,36 @@ class AdaptionProvider(LLMProvider):
         max_tokens: int,
         seed: int | None,
     ) -> dict[str, Any]:
-        """Call Adaption SDK directly."""
+        """Call Adaption official SDK directly."""
         try:
-            # Map input appropriately
-            response = self._sdk_client.responses.create(
-                model=model,
-                input=messages,
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
-            content = getattr(response, "content", "") or str(response)
+            system_instructions, input_payload = self._split_messages(messages)
+
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "input": input_payload,
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            }
+            if system_instructions:
+                kwargs["instructions"] = system_instructions
+
+            response = self._sdk_client.responses.create(**kwargs)
+
+            # Extract output text from official Response object
+            content = getattr(response, "output_text", None)
+            if not content:
+                output = getattr(response, "output", None)
+                if isinstance(output, str):
+                    content = output
+                elif isinstance(output, list) and output:
+                    content = str(output[0])
+                else:
+                    content = getattr(response, "content", "") or str(response)
+
             usage = getattr(response, "usage", None)
-            p_tokens = getattr(usage, "prompt_tokens", len(str(messages).split())) if usage else 0
-            c_tokens = getattr(usage, "completion_tokens", len(content.split())) if usage else 0
-            t_tokens = getattr(usage, "total_tokens", p_tokens + c_tokens) if usage else 0
+            p_tokens = getattr(usage, "input_tokens", getattr(usage, "prompt_tokens", len(str(messages).split()))) if usage else len(str(messages).split())
+            c_tokens = getattr(usage, "output_tokens", getattr(usage, "completion_tokens", len(content.split()))) if usage else len(content.split())
+            t_tokens = getattr(usage, "total_tokens", p_tokens + c_tokens) if usage else (p_tokens + c_tokens)
 
             self._call_count += 1
             self._prompt_tokens += p_tokens
@@ -210,21 +272,25 @@ class AdaptionProvider(LLMProvider):
                     "total_tokens": t_tokens,
                 },
                 "model": model,
-                "finish_reason": "stop",
+                "finish_reason": getattr(response, "status", "stop") or "stop",
             }
         except Exception as exc:
-            # Fall back to HTTP if SDK signature differs
-            print(f"[AdaptionProvider] SDK call failed ({exc}), falling back to HTTP.", file=sys.stderr)
+            # Fall back to HTTP if SDK fails or raises an error
+            print(f"[AdaptionProvider] SDK call encountered issue ({exc}), falling back to HTTP.", file=sys.stderr)
             return self._generate_via_http(messages, model, temperature, max_tokens, seed)
 
     @staticmethod
     def _extract_content(data: dict[str, Any]) -> str:
         """Extract text content across variations of API response payloads."""
+        if "output_text" in data and isinstance(data["output_text"], str):
+            return data["output_text"]
         if "content" in data:
             if isinstance(data["content"], str):
                 return data["content"]
             if isinstance(data["content"], list):
                 return "\n".join(str(item) for item in data["content"])
+        if "output" in data and isinstance(data["output"], str):
+            return data["output"]
         if "response" in data and isinstance(data["response"], str):
             return data["response"]
         if "choices" in data and len(data["choices"]) > 0:
