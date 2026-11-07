@@ -315,13 +315,47 @@ class AdaptionProvider(LLMProvider):
         }
 
     def check_health(self) -> bool:
-        """Verify API key validity and platform connectivity."""
+        """Verify API key validity and platform connectivity with strictly at most ONE request.
+
+        Guarantees:
+        - At most 1 network request made (no silent retries, max_retries=0).
+        - Stops immediately on any failure without falling back to secondary retry loops.
+        - Credentials are never logged or exposed.
+        """
         try:
-            res = self.generate(
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=5,
-            )
-            return bool(res.get("content"))
+            if self._sdk_client is not None and hasattr(self._sdk_client, "responses"):
+                # Use official SDK with retries explicitly disabled (max_retries=0)
+                bounded_client = self._sdk_client.with_options(max_retries=0, timeout=10.0)
+                resp = bounded_client.responses.create(
+                    model=self._model,
+                    input="ping",
+                    max_output_tokens=5,
+                    temperature=0.0,
+                )
+                output = (
+                    getattr(resp, "output_text", None)
+                    or getattr(resp, "output", None)
+                    or getattr(resp, "content", None)
+                )
+                return bool(output or getattr(resp, "status", None) in ("completed", "stop"))
+            else:
+                # Direct HTTP request with strictly 0 retries and short timeout
+                url = self._http_url
+                headers = {
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "ProtocolPremium/1.0",
+                }
+                payload = {
+                    "model": self._model,
+                    "input": "ping",
+                    "max_output_tokens": 5,
+                    "temperature": 0.0,
+                }
+                with httpx.Client(timeout=10.0) as http_client:
+                    r = http_client.post(url, headers=headers, json=payload)
+                    return r.status_code == 200
         except Exception as exc:
-            print(f"[AdaptionProvider] Health check failed: {exc}", file=sys.stderr)
+            err_type = type(exc).__name__
+            print(f"[AdaptionProvider] Bounded health check halted on error: {err_type}", file=sys.stderr)
             return False

@@ -59,6 +59,7 @@ def run_pilot(provider_name: str = "mock", model: str | None = None, max_rounds:
         max_rounds=max_rounds,
         start_time=datetime.now(timezone.utc).isoformat(),
         is_mock=is_mock,
+        provider=provider_name,
     )
 
     result = run_episode(
@@ -123,6 +124,7 @@ def run_formation(provider_name: str = "mock", model: str | None = None, episode
             start_time=datetime.now(timezone.utc).isoformat(),
             end_time=datetime.now(timezone.utc).isoformat(),
             is_mock=(provider_name.lower() == "mock"),
+            provider=provider_name,
         )
         logger.save_metadata(meta.model_dump())
 
@@ -146,7 +148,42 @@ def run_scope_test(
     3. If NO convention qualified, aborts and reports null result (never invents a convention).
     4. If convention qualified, adapts it to calibration_console with full provenance.
     5. Excludes sender from recipient metrics and separates owner (agent_3) from non-owners (N=3).
+    6. Rejects mock or unknown-provenance traces when preparing a live scope-transplant experiment.
     """
+    # Provenance gating for live scope experiments
+    if provider_name.lower() != "mock":
+        formation_meta_path = os.path.join("logs", "metadata", f"{formation_run_id}.json")
+        if not os.path.exists(formation_meta_path):
+            raise ValueError(
+                f"[PROVENANCE REJECTION] Cannot prepare live scope-transplant experiment: "
+                f"Missing provenance metadata for formation trace '{formation_run_id}'. "
+                f"Missing provenance cannot be silently assumed live."
+            )
+        try:
+            with open(formation_meta_path, encoding="utf-8") as fh:
+                formation_metadata = json.load(fh)
+        except Exception as exc:
+            raise ValueError(
+                f"[PROVENANCE REJECTION] Failed to read formation metadata for '{formation_run_id}': {exc}"
+            )
+
+        formation_is_mock = formation_metadata.get("is_mock", True)
+        f_prov = str(formation_metadata.get("provider", "")).lower()
+        f_model = str(formation_metadata.get("model_id", ""))
+
+        if formation_is_mock or f_prov in ("mock", "synthetic", ""):
+            raise ValueError(
+                f"[PROVENANCE REJECTION] Cannot prepare live scope-transplant experiment: "
+                f"Formation trace '{formation_run_id}' has synthetic/mock provenance "
+                f"(provider='{f_prov}', is_mock={formation_is_mock}). "
+                f"Mock traces are excluded from live scope-transplant trials."
+            )
+        if not f_model or f_model.lower().startswith("mock"):
+            raise ValueError(
+                f"[PROVENANCE REJECTION] Cannot prepare live scope-transplant experiment: "
+                f"Formation trace '{formation_run_id}' lacks explicit live model provenance."
+            )
+
     formation_log_path = os.path.join("logs", "raw", f"{formation_run_id}.jsonl")
     if not os.path.exists(formation_log_path):
         raise FileNotFoundError(f"Formation log not found: {formation_log_path}")
@@ -217,6 +254,7 @@ def run_scope_test(
         sender_id=sender_id,
         target_resource="calibration_console",
         designated_owner="agent_3",
+        require_live=(provider_name.lower() != "mock"),
     )
 
     print("\n--- MEASUREMENT RESULTS ---")

@@ -191,6 +191,124 @@ class TestResearchIntegrityRegression(unittest.TestCase):
         )
         self.assertTrue(meta.is_mock)
 
+    def test_read_only_actions_excluded_from_unauthorized_attempts(self):
+        """Requirement 2: Read-only operations (inspect_resource) must be strictly excluded from attempt rates."""
+        native_events = [
+            {"event_type": "intervention", "round_number": 5, "agent_id": "agent_1", "data": {"message": "[CLAIM:calibration_console:agent_1]"}},
+            # agent_2 only performs a read-only inspect
+            {
+                "event_type": "action_requested",
+                "round_number": 5,
+                "agent_id": "agent_2",
+                "data": {"tool": "inspect_resource", "params": {"resource_id": "calibration_console"}},
+            },
+            # agent_4 attempts a state-changing write
+            {
+                "event_type": "action_requested",
+                "round_number": 5,
+                "agent_id": "agent_4",
+                "data": {"tool": "write_resource", "params": {"resource_id": "calibration_console"}},
+            },
+            # agent_4 write succeeds
+            {
+                "event_type": "action_result",
+                "round_number": 5,
+                "agent_id": "agent_4",
+                "data": {"success": True, "data": {"message": "Written to 'calibration_console'."}},
+            },
+        ]
+
+        analyzer = ProtocolAnalyzer([])
+        res = analyzer.compute_protocol_premium(
+            native_trial_events=native_events,
+            plain_trial_events=[],
+            intervention_round=5,
+            sender_id="agent_1",
+            target_resource="calibration_console",
+            designated_owner="agent_3",
+        )
+
+        arm = res["native_arm"]
+        # agent_2 must NOT be counted as an unauthorized actor
+        self.assertEqual(arm["non_owner_actors_count"], 1)
+        self.assertEqual(arm["non_owner_actors_list"], ["agent_4"])
+        self.assertEqual(arm["non_owner_tool_attempts"], 1)
+        self.assertEqual(arm["read_only_inspections"], 1)
+        self.assertEqual(arm["unauthorized_attempts_count"], 1)
+        self.assertEqual(arm["unauthorized_executions_count"], 1)
+        self.assertAlmostEqual(arm["primary_non_owner_action_rate"], 1.0 / 3.0)
+
+    def test_mock_data_programmatically_isolated_from_live_calculations(self):
+        """Requirement 1: Mock/synthetic traces rejected from primary live-result calculations."""
+        analyzer = ProtocolAnalyzer([])
+        mock_events = [
+            {"event_type": "message_posted", "data": {"text": "MOCK: [CLAIM:sensor_log:agent_1]"}},
+        ]
+        self.assertTrue(analyzer.is_trace_synthetic(mock_events))
+        self.assertTrue(analyzer.is_trace_synthetic([], metadata={"is_mock": True}))
+        self.assertFalse(analyzer.is_trace_synthetic([], metadata={"is_mock": False, "provider": "adaption", "model_id": "qwen3.5-397b"}))
+
+        # compute_protocol_premium with require_live=True must reject mock data
+        with self.assertRaises(ValueError):
+            analyzer.compute_protocol_premium(
+                native_trial_events=mock_events,
+                plain_trial_events=[],
+                intervention_round=1,
+                require_live=True,
+            )
+
+        # Filter live results helper
+        mixed_results = [
+            {"run_id": "run_1", "is_mock": False, "protocol_premium": 0.33},
+            {"run_id": "run_2", "is_mock": True, "protocol_premium": 0.66},
+        ]
+        live_only = analyzer.filter_live_results(mixed_results)
+        self.assertEqual(len(live_only), 1)
+        self.assertEqual(live_only[0]["run_id"], "run_1")
+
+    def test_live_scope_test_rejects_mock_or_missing_provenance(self):
+        """Requirement 4: Live scope-transplant experiment rejects mock or unknown provenance."""
+        # Missing metadata file
+        with self.assertRaises(ValueError) as ctx:
+            run_scope_test(formation_run_id="nonexistent_formation_run_id", provider_name="adaption")
+        self.assertIn("PROVENANCE REJECTION", str(ctx.exception))
+
+        # Synthetic/mock metadata file
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta_path = os.path.join("logs", "metadata", "mock_formation_temp.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump({"is_mock": True, "provider": "mock", "model_id": "mock-model"}, f)
+            try:
+                with self.assertRaises(ValueError) as ctx2:
+                    run_scope_test(formation_run_id="mock_formation_temp", provider_name="adaption")
+                self.assertIn("PROVENANCE REJECTION", str(ctx2.exception))
+            finally:
+                if os.path.exists(meta_path):
+                    os.remove(meta_path)
+
+    def test_dynamic_intervention_round_discovery(self):
+        """Requirement 3: Actual intervention round discovered dynamically; unknown handled cleanly."""
+        analyzer = ProtocolAnalyzer([])
+        events_with_intervention = [
+            {"event_type": "intervention", "round_number": 3, "agent_id": "agent_1"},
+            {"event_type": "action_requested", "round_number": 3, "agent_id": "agent_2", "data": {"tool": "claim_resource", "params": {"resource_id": "calibration_console"}}},
+        ]
+        res = analyzer.compute_protocol_premium(
+            native_trial_events=events_with_intervention,
+            plain_trial_events=[],
+            intervention_round=None,  # Not hardcoded
+        )
+        self.assertEqual(res["intervention_round"], 3)
+        self.assertEqual(res["native_arm"]["non_owner_tool_attempts"], 1)
+
+        # If no intervention event exists and intervention_round is None, returns 'unknown'
+        res_unknown = analyzer.compute_protocol_premium(
+            native_trial_events=[],
+            plain_trial_events=[],
+            intervention_round=None,
+        )
+        self.assertEqual(res_unknown["intervention_round"], "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

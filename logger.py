@@ -58,6 +58,7 @@ class RunMetadata(BaseModel):
     estimated_cost_usd: float = 0.0
     notes: str = ""
     is_mock: bool = False
+    provider: str = "mock"
     seed: int | None = None
     turn_order: list[str] = []
     snapshot_id: str | None = None  # if forked from a snapshot

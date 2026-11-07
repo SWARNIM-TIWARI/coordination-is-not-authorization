@@ -57,17 +57,54 @@ st.markdown(
 st.sidebar.title("Protocol Premium")
 st.sidebar.caption("Swarm Alignment Hackathon 2026")
 
-log_files = sorted(glob.glob("logs/raw/*.jsonl"), reverse=True)
+all_log_files = sorted(glob.glob("logs/raw/*.jsonl"), reverse=True)
 
-if not log_files:
+if not all_log_files:
     st.warning("No log traces found in `logs/raw/`. Please run a pilot or formation run first.")
     st.info("Run `python run_experiment.py --mode pilot` to generate traces.")
     st.stop()
 
+
+def get_trace_info(path: str) -> tuple[bool, str]:
+    base = os.path.splitext(os.path.basename(path))[0]
+    mf = os.path.join("logs", "metadata", f"{base}.json")
+    if os.path.exists(mf):
+        try:
+            with open(mf, encoding="utf-8") as fh:
+                d = json.load(fh)
+                return d.get("is_mock", True), d.get("model_id", "unknown")
+        except Exception:
+            pass
+    return ("mock" in base or "test" in base), "mock"
+
+
+filter_option = st.sidebar.radio(
+    "Data Source Isolation",
+    ["All Traces", "Live Traces Only", "Development/Mock Only"],
+    index=0,
+)
+
+if filter_option == "Live Traces Only":
+    log_files = [p for p in all_log_files if not get_trace_info(p)[0]]
+    if not log_files:
+        st.sidebar.warning("No live traces found yet.")
+        log_files = all_log_files
+elif filter_option == "Development/Mock Only":
+    log_files = [p for p in all_log_files if get_trace_info(p)[0]]
+else:
+    log_files = all_log_files
+
+
+def format_trace_label(path: str) -> str:
+    base = os.path.basename(path)
+    mock, model = get_trace_info(path)
+    return f"[MOCK] {base}" if mock else f"[LIVE: {model}] {base}"
+
+
 selected_file = st.sidebar.selectbox(
     "Select Run Trace",
     log_files,
-    format_func=lambda p: os.path.basename(p),
+    format_func=format_trace_label,
 )
 
 run_id = os.path.splitext(os.path.basename(selected_file))[0]
@@ -80,7 +117,7 @@ if os.path.exists(meta_file):
     except Exception:
         pass
 
-is_mock = metadata.get("is_mock", True) if metadata else ("mock" in run_id or "pilot" in run_id)
+is_mock = metadata.get("is_mock", True) if metadata else ("mock" in run_id or "test" in run_id)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Run ID:** `{run_id}`")
@@ -323,12 +360,26 @@ if scopetest_files:
         n_events = EventLog.load_from_file(native_log)
         p_events = EventLog.load_from_file(plain_log)
 
+        # Dynamically discover intervention round from events; if unavailable, mark unknown
+        actual_intervention_round = None
+        for ev in n_events:
+            if ev.get("event_type") == "intervention":
+                actual_intervention_round = ev.get("round_number")
+                break
+
         prem_res = analyzer.compute_protocol_premium(
             native_trial_events=n_events,
             plain_trial_events=p_events,
-            intervention_round=1,
+            intervention_round=actual_intervention_round,
             target_resource="calibration_console",
         )
+
+        round_display = (
+            f"Round {prem_res['intervention_round']}"
+            if prem_res.get("intervention_round") != "unknown"
+            else "Unknown"
+        )
+        prov_label = prem_res.get("provenance_status", "unknown").upper()
 
         col_n, col_p = st.columns(2)
 
@@ -338,12 +389,14 @@ if scopetest_files:
                 <div class="comparison-box">
                     <h4 style="color: #58a6ff;">NATIVE CONVENTION ARM</h4>
                     <p><b>Request Form:</b> <code>[Observed Swarm Syntax on Resource B]</code></p>
+                    <p style="font-size: 0.85rem; color: #8b949e;"><b>Intervention:</b> {round_display} &bull; <b>Data Source:</b> {prov_label}</p>
                     <hr style="border-color: #30363d;">
                     <p><b>Primary Metric (Non-Owner Action Rate):</b> <span style="font-size: 1.25rem; font-weight: 700; color: #f78166;">{prem_res['native_arm']['primary_non_owner_action_rate']:.1%}</span> ({prem_res['native_arm']['non_owner_actors_count']}/{prem_res['primary_denominator']} non-owners)</p>
-                    <p><b>Non-Owner Tool Attempts on B:</b> {prem_res['native_arm']['non_owner_tool_attempts']}</p>
+                    <p><b>Unauthorized Attempts on B:</b> {prem_res['native_arm']['unauthorized_attempts_count']} <i>(state-changing only)</i></p>
+                    <p><b>Read-Only Inspections on B:</b> {prem_res['native_arm'].get('read_only_inspections', 0)} <i>(excluded from rate)</i></p>
                     <p><b>Owner (agent_3) Actions on B:</b> {prem_res['native_arm']['owner_tool_attempts']} <i>(authorized)</i></p>
                     <p><b>Verbal Assents:</b> {prem_res['native_arm']['verbal_assents']} &bull; <b>Verbal Acks:</b> {prem_res['native_arm']['verbal_acknowledgements']}</p>
-                    <p><b>Successful Unauthorized State Changes:</b> {prem_res['native_arm']['total_unauthorized_state_changes']}</p>
+                    <p><b>Successful Unauthorized State Changes:</b> {prem_res['native_arm']['unauthorized_executions_count']}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -355,12 +408,14 @@ if scopetest_files:
                 <div class="comparison-box">
                     <h4 style="color: #8b949e;">PLAIN-LANGUAGE CONTROL ARM</h4>
                     <p><b>Request Form:</b> <i>[Semantically Equivalent Plain Language]</i></p>
+                    <p style="font-size: 0.85rem; color: #8b949e;"><b>Intervention:</b> {round_display} &bull; <b>Data Source:</b> {prov_label}</p>
                     <hr style="border-color: #30363d;">
                     <p><b>Primary Metric (Non-Owner Action Rate):</b> <span style="font-size: 1.25rem; font-weight: 700; color: #58a6ff;">{prem_res['plain_arm']['primary_non_owner_action_rate']:.1%}</span> ({prem_res['plain_arm']['non_owner_actors_count']}/{prem_res['primary_denominator']} non-owners)</p>
-                    <p><b>Non-Owner Tool Attempts on B:</b> {prem_res['plain_arm']['non_owner_tool_attempts']}</p>
+                    <p><b>Unauthorized Attempts on B:</b> {prem_res['plain_arm']['unauthorized_attempts_count']} <i>(state-changing only)</i></p>
+                    <p><b>Read-Only Inspections on B:</b> {prem_res['plain_arm'].get('read_only_inspections', 0)} <i>(excluded from rate)</i></p>
                     <p><b>Owner (agent_3) Actions on B:</b> {prem_res['plain_arm']['owner_tool_attempts']} <i>(authorized)</i></p>
                     <p><b>Verbal Assents:</b> {prem_res['plain_arm']['verbal_assents']} &bull; <b>Verbal Acks:</b> {prem_res['plain_arm']['verbal_acknowledgements']}</p>
-                    <p><b>Successful Unauthorized State Changes:</b> {prem_res['plain_arm']['total_unauthorized_state_changes']}</p>
+                    <p><b>Successful Unauthorized State Changes:</b> {prem_res['plain_arm']['unauthorized_executions_count']}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
