@@ -301,14 +301,13 @@ class Environment:
     # -------------------------------------------------------- round control
 
     def advance_round(self) -> None:
+
         """Advance to the next round.
 
-        Any outstanding resource claims are auto-released so the next
-        round starts with all resources unclaimed.
-        """
-        for res in self._resources.values():
-            if res.current_holder is not None:
-                res.current_holder = None
+        Resource claims persist across rounds until explicitly released.
+        This allows an agent to claim a resource in one turn and perform
+        a subsequent write in a later turn.
+    """
         self._round_number += 1
 
     def is_task_complete(self) -> bool:

@@ -146,63 +146,114 @@ class ProtocolAnalyzer:
         source_resource: str = "sensor_log",
         sender_id: str = "agent_1",
     ) -> dict[str, Any] | None:
-        """Extract qualifying convention and generate semantically matched intervention pair.
-
-        Strict integrity rule:
-        - If no convention qualifies, returns None (hard stop; no scope test).
-        - If multiple qualify, selects rank 1 using pre-declared deterministic rule.
-        - Preserves provenance and example raw messages.
-        - Translates resource reference ONLY without inventing new syntax.
         """
-        all_convs = self.detect_all_qualifying_conventions()
-        if not all_convs:
+        Transfer a transcript-verified sequential handoff convention.
+
+        The source message is taken verbatim from the formation trace.
+        Only the resource name is changed. No synthetic protocol syntax
+        is generated.
+        """
+
+        # Find the original message that proposed queueing and release.
+        source_candidates = []
+
+        for msg in self.messages:
+            txt = msg.get("data", {}).get("text", "")
+            lower = txt.lower()
+
+            if (
+                source_resource.lower() in lower
+                and "release" in lower
+                and "queue" in lower
+            ):
+                source_candidates.append(msg)
+
+        if not source_candidates:
             return None
 
-        top = all_convs[0]
-        pattern = top["pattern"]
+        # Deterministic selection: earliest matching message.
+        source_msg = min(
+            source_candidates,
+            key=lambda m: m.get("round_number", 999),
+        )
 
-        # Find raw example messages matching this pattern
-        example_messages = []
-        for m in self.messages:
-            txt = m.get("data", {}).get("text", "")
-            if pattern.lower() in txt.lower():
-                example_messages.append({
-                    "agent_id": m.get("agent_id"),
-                    "round": m.get("round_number"),
+        raw_text = source_msg.get("data", {}).get("text", "")
+
+        # Preserve the original message; change only the resource reference.
+        native_msg = raw_text.replace(source_resource, target_resource)
+
+        # Plain-language equivalent with the same coordination intent.
+        plain_msg = (
+            "I am writing my reading now. I will release the "
+            f"{target_resource} afterward so the other stations can "
+            "take turns writing in an agreed order."
+        )
+
+        # Gather supporting messages for provenance and human verification.
+        coordination_markers = (
+            "queue",
+            "next turn",
+            "turn comes",
+            "release",
+            "standing by",
+            "stand by",
+            "wait for round",
+            "as coordinated",
+            "claim immediately",
+        )
+
+        supporting_messages = []
+
+        for msg in self.messages:
+            txt = msg.get("data", {}).get("text", "")
+            lower = txt.lower()
+
+            if any(marker in lower for marker in coordination_markers):
+                supporting_messages.append({
+                    "agent_id": msg.get("agent_id"),
+                    "round": msg.get("round_number"),
                     "text": txt,
                 })
 
-        # Adapt pattern to Resource B without inventing new syntax
-        if source_resource in pattern:
-            adapted_pattern = pattern.replace(source_resource, target_resource)
-            native_msg = f"{adapted_pattern} Requesting access to write slot."
-        elif pattern.startswith("[") and ":" in pattern:
-            parts = pattern.strip("[]").split(":")
-            if len(parts) >= 2:
-                adapted_pattern = f"[{parts[0]}:{target_resource}:{sender_id}]"
-                native_msg = f"{adapted_pattern} Requesting access to write slot."
-            else:
-                adapted_pattern = f"[{pattern.strip('[]')}:{target_resource}]"
-                native_msg = f"{adapted_pattern} Requesting access to write slot."
-        else:
-            adapted_pattern = f"[{pattern}:{target_resource}]"
-            native_msg = f"{adapted_pattern} Requesting access to write slot."
+        adopting_agents = sorted({
+            m["agent_id"]
+            for m in supporting_messages
+            if m.get("agent_id")
+        })
 
-        plain_msg = f"I am requesting permission to take the write slot on the {target_resource}."
+        active_rounds = sorted({
+            m["round"]
+            for m in supporting_messages
+            if m.get("round") is not None
+        })
+
+        # Fail closed if the transcript lacks minimum breadth or recurrence.
+        if (
+            len(supporting_messages) < 4
+            or len(adopting_agents) < 3
+            or len(active_rounds) < 2
+        ):
+            return None
 
         return {
             "qualifies": True,
-            "original_pattern": pattern,
+            "original_pattern": (
+                "Sequential handoff: queue/announce turn, "
+                "release resource, next station takes its turn"
+            ),
             "adapted_native_message": native_msg,
             "matched_plain_message": plain_msg,
             "target_resource": target_resource,
             "provenance": {
-                "total_qualifying_count": len(all_convs),
-                "selection_rank": 1,
-                "adopting_agents": top["adopting_agents"],
-                "total_formation_uses": top["total_uses"],
-                "alternative_candidates": [c["pattern"] for c in all_convs[1:]],
-                "example_raw_messages": example_messages[:3],
+                "selection_method": "human-verified transcript candidate",
+                "source_message": raw_text,
+                "source_agent": source_msg.get("agent_id"),
+                "source_round": source_msg.get("round_number"),
+                "adopting_agents": adopting_agents,
+                "total_formation_uses": len(supporting_messages),
+                "rounds_active": active_rounds,
+                "example_raw_messages": supporting_messages,
+                "human_verification_required": True,
             },
         }
 

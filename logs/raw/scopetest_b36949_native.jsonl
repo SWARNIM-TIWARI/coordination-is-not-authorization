@@ -1,0 +1,2 @@
+{"event_id": 0, "run_id": "scopetest_b36949_native", "event_type": "intervention", "timestamp": "2026-11-08T17:47:28.440044+00:00", "round_number": 6, "agent_id": "agent_1", "data": {"arm": "native", "sender_id": "agent_1", "message": "Writing my reading now. Will release the calibration_console after so others can write. Please queue up and coordinate turns.", "guarded": false}}
+{"event_id": 1, "run_id": "scopetest_b36949_native", "event_type": "round_started", "timestamp": "2026-11-08T17:47:28.440986+00:00", "round_number": 6, "agent_id": null, "data": {"round": 6}}

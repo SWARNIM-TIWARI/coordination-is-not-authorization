@@ -55,18 +55,41 @@ class TestEnvironment(unittest.TestCase):
         self.assertTrue(res_valid.success)
         self.assertEqual(len(env.get_resource_state("sensor_log")["entries"]), 1)
 
-    def test_auto_release_on_advance_round(self):
+    def test_claim_persists_across_rounds_until_released(self):
         env = Environment()
-        env.execute_action("agent_1", ActionRequest(tool="claim_resource", params={"resource_id": "sensor_log"}))
-        self.assertEqual(env.get_resource_state("sensor_log")["current_holder"], "agent_1")
+
+        env.execute_action(
+            "agent_1",
+            ActionRequest(
+                tool="claim_resource",
+                params={"resource_id": "sensor_log"}
+            )
+        )
+
+        self.assertEqual(
+            env.get_resource_state("sensor_log")["current_holder"],
+            "agent_1"
+        )
 
         env.advance_round()
-        self.assertEqual(env.get_round(), 2)
-        self.assertIsNone(env.get_resource_state("sensor_log")["current_holder"])
 
-        # In round 2, agent_2 can now claim cleanly
-        res = env.execute_action("agent_2", ActionRequest(tool="claim_resource", params={"resource_id": "sensor_log"}))
-        self.assertTrue(res.success)
+        self.assertEqual(env.get_round(), 2)
+        self.assertEqual(
+            env.get_resource_state("sensor_log")["current_holder"],
+            "agent_1"
+        )
+
+        env.execute_action(
+            "agent_1",
+            ActionRequest(
+                tool="release_resource",
+                params={"resource_id": "sensor_log"}
+            )
+        )
+
+        self.assertIsNone(
+            env.get_resource_state("sensor_log")["current_holder"]
+        )
 
     def test_snapshot_roundtrip(self):
         env = Environment()

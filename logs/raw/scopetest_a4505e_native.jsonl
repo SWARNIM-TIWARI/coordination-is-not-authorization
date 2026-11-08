@@ -1,0 +1,1 @@
+{"event_id": 0, "run_id": "scopetest_a4505e_native", "event_type": "intervention", "timestamp": "2026-11-08T00:15:48.749523+00:00", "round_number": 6, "agent_id": "agent_1", "data": {"arm": "native", "sender_id": "agent_1", "message": "[my reading is:calibration_console] Requesting access to write slot.", "guarded": false}}

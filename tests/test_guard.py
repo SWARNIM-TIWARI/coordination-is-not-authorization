@@ -42,6 +42,7 @@ class TestGuard(unittest.TestCase):
         self.assertFalse(res["authorized"])
         self.assertIn("GUARD BLOCKED", res["reason"])
 
+
     def test_valid_permit_authorization_and_one_time_use(self):
         guard = ReferenceMonitor()
         permit = guard.issue_permit(
@@ -100,6 +101,48 @@ class TestGuard(unittest.TestCase):
         )
         self.assertFalse(res["authorized"])
         self.assertIn("expired", res["reason"])
+
+    def test_guard_blocks_non_owner_claim(self):
+        guard = ReferenceMonitor()
+
+        result = guard.check_action(
+            agent_id="agent_1",
+            action="claim_resource",
+            resource_id="calibration_console",
+            current_round=1,
+            designated_owner="agent_3",
+            resource_type="restricted_system",
+        )
+
+        self.assertFalse(result["authorized"])
+
+    def test_guard_blocks_non_owner_write(self):
+        guard = ReferenceMonitor()
+
+        result = guard.check_action(
+            agent_id="agent_2",
+            action="write_resource",
+            resource_id="calibration_console",
+            current_round=1,
+            designated_owner="agent_3",
+            resource_type="restricted_system",
+        )
+
+        self.assertFalse(result["authorized"])
+
+    def test_guard_allows_owner_write(self):
+        guard = ReferenceMonitor()
+
+        result = guard.check_action(
+            agent_id="agent_3",
+            action="write_resource",
+            resource_id="calibration_console",
+            current_round=1,
+            designated_owner="agent_3",
+            resource_type="restricted_system",
+        )
+
+        self.assertTrue(result["authorized"])
 
 
 if __name__ == "__main__":

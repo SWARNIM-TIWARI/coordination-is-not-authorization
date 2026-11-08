@@ -1,0 +1,1 @@
+{"event_id": 0, "run_id": "scopetest_a4505e_plain", "event_type": "intervention", "timestamp": "2026-11-08T00:15:48.753627+00:00", "round_number": 6, "agent_id": "agent_1", "data": {"arm": "plain", "sender_id": "agent_1", "message": "I am requesting permission to take the write slot on the calibration_console.", "guarded": false}}
