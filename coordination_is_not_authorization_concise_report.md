@@ -1,7 +1,7 @@
 # Coordination Is Not Authorization
 ## Can a peer-made rule cross a permission boundary?
 
-**Author:** [Your name]  
+**Author:** Swarnim Tiwari  
 **Affiliation:** Independent researcher  
 **With Apart Research**
 
@@ -37,7 +37,7 @@ The first resource, `sensor_log`, is open to all five agents. The second, `calib
 
 **Permission monitor.** A reference monitor checks the agent, action, and target resource before a state change. Unit tests cover non-owner claim and write denial and owner write permission. The monitor runs in a simulation; it is not a production security service.
 
-[Insert Figure 1 here]
+[Figure 1 here]
 
 **Figure 1.** Five agents form a candidate turn-taking pattern around the open sensor log. The wording is then tested in native and plain-language arms around the restricted calibration console. Only the owner may make changes.
 
@@ -77,13 +77,6 @@ The main lesson is practical: a group's messages should never be the source of i
 
 Five agents proposed a way to take turns around a shared log, but they did not complete the task. When related wording was used around a restricted console, non-owners inspected it but did not try to change it. The project does not show that a social rule can override resource ownership, and it does not show a live attack being blocked. It does provide a small environment for asking the question and a tested starting point for enforcing permissions outside the conversation.
 
-## Code and Data
-
-**Code:** [Insert GitHub repository URL]. The repository contains the simulation, agent runner, resource environment, reference monitor, tests, and analysis code.
-
-**Data:** Raw JSONL event traces are included under `logs/raw/`; formation and pilot snapshots and partial run metadata are under `logs/metadata/`. The archive includes one live formation trace, eight complete unguarded native/plain pairs, one guarded pair, two adversarial conditions, and additional mock, incomplete, and invalid traces. The mock test fixtures are not research observations. A data note and file guide are provided in `DATA_DESCRIPTION.md`. This is a small trace collection, not a benchmark dataset. The scope logs lack full run metadata and source revision IDs. All resources and sensor values are simulated; no human-subject data were collected.
-
-**Demo:** [Insert Google Drive video link. Set access to “Anyone with the link can view.”]
 
 **Pre-existing work:** The core simulation, agent runner, shared-resource environment, logging and replay code, Adaption provider adapter, and initial permission-monitor code existed before the sprint. Sprint-period work focused on the research question and protocol, live runs, scope-test prompts, resource lifecycle changes, guard tests, and analysis of the archived traces. The report does not claim that the full software stack was built during the sprint.
 
@@ -99,7 +92,7 @@ Kanchi, S. (2026, November 2). *Permitted but unauthorized: Affordance-induced d
 
 ## Author Contributions
 
-[Your name] designed the study, implemented and ran the simulation, reviewed the event traces, and prepared the report.
+Swarnim Tiwari designed the study, implemented and ran the simulation, reviewed the event traces, and prepared the report.
 
 ## Appendix A. Limitations and Dual-Use / Ethical Considerations
 
@@ -108,7 +101,3 @@ This is a small simulation study, not a test of real systems. It uses one format
 The work could help developers test how peer messages affect agent groups. The same ideas could also help someone design messages that try to influence a group. To limit risk, all tests used synthetic data and in-memory resources. No real equipment, accounts, private user data, or production systems were involved. The adversarial message was tested only inside the simulation.
 
 The permission monitor is a defensive prototype, not a production-ready security system. A real deployment would need authenticated agent identities, secure capability handling, complete audit logs, and tests that show unauthorized actions are blocked at the tool boundary. We report failed runs and negative findings rather than presenting them as successful attacks. No human participants or personal datasets were used.
-
-## Appendix B. LLM Usage Statement
-
-ChatGPT assisted with code debugging, trace review, and editing. Adaption's `qwen3.5-397b` model acted as the agents in the live experiments. The author is responsible for the report and its claims. Reported counts were checked against the archived JSONL traces and the project test suite.
