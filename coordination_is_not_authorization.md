@@ -1,10 +1,8 @@
 # Coordination Is Not Authorization
 ## A pilot study of emergent coordination patterns and authorization boundaries in a five-agent LLM system
 
-**Author(s):** [Insert author name(s)]  
-**Affiliation(s):** [Insert institution / organization]  
-**Version:** Working paper 0.1  
-**Evidence cut-off:** 9 November 2026
+**Author(s):** Swarnim Tiwari
+**Affiliation(s):** Independent
 
 > **Status note.** This paper reports an exploratory engineering pilot and an audit of archived traces. It is not a confirmatory study. The current source snapshot contains a matched-pair harness bug that prevents reproduction of the historical native/plain intervention contrast; this is disclosed below.
 
